@@ -129,13 +129,17 @@ try:
     from .local_settings import (
         SECRET_KEY as LOCAL_SECRET_KEY,
         DEBUG as LOCAL_DEBUG,
-        ALLOWED_HOSTS as LOCAL_ALLOWED_HOSTS,   
+        ALLOWED_HOSTS as LOCAL_ALLOWED_HOSTS,
+        # Database settings
+        DATABASES as LOCAL_DATABASES,
     )
     # Apply local settings
     SECRET_KEY = LOCAL_SECRET_KEY
     DEBUG = LOCAL_DEBUG
     ALLOWED_HOSTS = LOCAL_ALLOWED_HOSTS
+    DATABASES = LOCAL_DATABASES  # Simplified - no need for locals() check
+        
 except ImportError:
     # No local_settings.py file found - keep defaults or raise error
     if SECRET_KEY is None:
-        raise Exception("local_settings.py is required! Copy from local_settings.py.example and configure.")
+        raise Exception("config error: SECRET_KEY must be set in local_settings.py for development")
