@@ -132,12 +132,18 @@ try:
         ALLOWED_HOSTS as LOCAL_ALLOWED_HOSTS,
         # Database settings
         DATABASES as LOCAL_DATABASES,
+        # Cache settings (optional)
+        CACHES as LOCAL_CACHES,
     )
     # Apply local settings
     SECRET_KEY = LOCAL_SECRET_KEY
     DEBUG = LOCAL_DEBUG
     ALLOWED_HOSTS = LOCAL_ALLOWED_HOSTS
-    DATABASES = LOCAL_DATABASES  # Simplified - no need for locals() check
+    DATABASES = LOCAL_DATABASES
+    
+    # Apply cache settings if provided
+    if 'LOCAL_CACHES' in locals():
+        CACHES = LOCAL_CACHES
         
 except ImportError:
     # No local_settings.py file found - keep defaults or raise error
