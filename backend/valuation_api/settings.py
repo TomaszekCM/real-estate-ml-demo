@@ -132,8 +132,15 @@ try:
         ALLOWED_HOSTS as LOCAL_ALLOWED_HOSTS,
         # Database settings
         DATABASES as LOCAL_DATABASES,
-        # Cache settings (optional)
+        # Cache settings
         CACHES as LOCAL_CACHES,
+        # Celery settings
+        CELERY_BROKER_URL,
+        CELERY_RESULT_BACKEND,
+        CELERY_ACCEPT_CONTENT,
+        CELERY_TASK_SERIALIZER,
+        CELERY_RESULT_SERIALIZER,
+        CELERY_TIMEZONE,
     )
     # Apply local settings
     SECRET_KEY = LOCAL_SECRET_KEY

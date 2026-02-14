@@ -15,7 +15,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  # Redis Cache
+  # Redis Cache & Message Broker
   redis:
     image: redis:7-alpine
     container_name: real_estate_redis
@@ -25,6 +25,24 @@ services:
       - redis_data:/data
     restart: unless-stopped
     command: redis-server --appendonly yes
+
+  # Celery Worker for async tasks
+  celery_worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.celery
+    container_name: real_estate_celery_worker
+    depends_on:
+      - redis
+      - database
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql://postgres:postgres123@database:5432/real_estate_db
+    volumes:
+      - ./backend:/app:cached
+    command: watchmedo auto-restart --directory=/app --pattern='*/tasks.py;*/celery.py;*/settings.py;*/models.py' --recursive -- celery -A valuation_api worker --loglevel=info
+    restart: unless-stopped
 
 volumes:
   postgres_data:

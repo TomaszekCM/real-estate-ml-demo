@@ -135,3 +135,42 @@ class InfrastructureHealthTest(TestCase):
         # 4. Clean up
         cache.delete(cache_key)
         request.delete()
+
+
+class CeleryTaskTest(TestCase):
+    """Test Celery task functionality"""
+
+    def test_celery_app_configuration(self):
+        """Test that Celery is properly configured"""
+        from valuation_api.celery import app as celery_app
+        
+        # Check if app can be imported
+        self.assertIsNotNone(celery_app)
+        self.assertEqual(celery_app.main, 'valuation_api')
+
+    def test_hello_world_task_import(self):
+        """Test that we can import our custom tasks without errors"""
+        try:
+            from .tasks import hello_world
+            task_import_success = True
+        except ImportError:
+            task_import_success = False
+        
+        self.assertTrue(task_import_success, "Failed to import Celery task")
+
+    def test_hello_world_task_sync(self):
+        """Test hello_world task execution (synchronous mode for testing)"""  
+        from .tasks import hello_world
+        
+        # Test task directly (not async)
+        result = hello_world()
+        self.assertEqual(result, "Hello from Celery!")
+
+    def test_task_registration(self):
+        """Test that tasks are properly registered with Celery"""
+        from valuation_api.celery import app as celery_app
+        
+        # Check if our tasks are registered
+        registered_tasks = list(celery_app.tasks.keys())
+        
+        self.assertIn('valuation.tasks.hello_world', registered_tasks)
