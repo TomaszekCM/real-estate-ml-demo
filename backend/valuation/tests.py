@@ -4,6 +4,7 @@ from django.db import connection
 import redis
 from django.conf import settings
 from .models import ValuationRequest, ValuationResult
+from celery.result import AsyncResult
 
 
 class RedisCacheTest(TestCase):
@@ -173,4 +174,157 @@ class CeleryTaskTest(TestCase):
         # Check if our tasks are registered
         registered_tasks = list(celery_app.tasks.keys())
         
-        self.assertIn('valuation.tasks.hello_world', registered_tasks)
+        # Define expected tasks to avoid duplication with endpoint test
+        expected_tasks = [
+            'valuation.tasks.add_numbers',
+            'valuation.tasks.hello_world', 
+            'valuation.tasks.debug_sleep'
+        ]
+        
+        for task in expected_tasks:
+            self.assertIn(task, registered_tasks)
+
+
+class TaskEndpointTest(TestCase):
+    """Test task execution endpoints"""
+    
+    def test_health_check_endpoint(self):
+        """Test health check endpoint works"""
+        response = self.client.get('/api/health/')
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('timestamp', data)
+    
+    def test_test_task_get_endpoint(self):
+        """Test GET on test-task endpoint returns available tasks"""
+        response = self.client.get('/api/test-task/')
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertIn('available_tasks', data)
+        self.assertIn('add_numbers', data['available_tasks'])
+        self.assertIn('hello_world', data['available_tasks'])
+        self.assertIn('debug_sleep', data['available_tasks'])
+    
+    def test_hello_world_task_endpoint(self):
+        """Test POST to execute hello_world task"""
+        response = self.client.post(
+            '/api/test-task/',
+            data='{"task": "hello_world"}',
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertEqual(data['status'], 'task_started')
+        self.assertEqual(data['task_name'], 'hello_world')
+        self.assertIn('task_id', data)
+        
+        # Verify task actually executes by checking result
+        task_result = AsyncResult(data['task_id'])
+        
+        # Wait for task completion (with timeout)
+        try:
+            result = task_result.get(timeout=5)
+            self.assertEqual(result, "Hello from Celery!")
+        except Exception as e:
+            self.fail(f"Task execution failed or timed out: {e}")
+    
+    def test_add_numbers_task_endpoint(self):
+        """Test POST to execute add_numbers task with parameters"""
+        response = self.client.post(
+            '/api/test-task/',
+            data='{"task": "add_numbers", "x": 15, "y": 25}',
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertEqual(data['status'], 'task_started')
+        self.assertEqual(data['task_name'], 'add_numbers')
+        self.assertEqual(data['params']['x'], 15)
+        self.assertEqual(data['params']['y'], 25)
+        self.assertIn('task_id', data)
+        
+        # Verify task actually executes with correct calculation
+        task_result = AsyncResult(data['task_id'])
+        
+        # Wait for task completion and verify calculation
+        try:
+            result = task_result.get(timeout=5)
+            self.assertEqual(result, 40, "Task should calculate 15 + 25 = 40")
+        except Exception as e:
+            self.fail(f"Task execution failed or timed out: {e}")
+    
+    def test_debug_sleep_task_endpoint(self):
+        """Test POST to execute debug_sleep task"""
+        response = self.client.post(
+            '/api/test-task/',
+            data='{"task": "debug_sleep", "duration": 1}',  # Short duration for testing
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 200)
+        
+        data = response.json()
+        self.assertEqual(data['status'], 'task_started')
+        self.assertEqual(data['task_name'], 'debug_sleep') 
+        self.assertEqual(data['params']['duration'], 1)
+        self.assertIn('note', data)  # Should mention non-blocking behavior
+        self.assertIn('task_id', data)
+        
+        # Verify task actually executes and returns correct structure
+        task_result = AsyncResult(data['task_id'])
+        
+        # Wait for task completion and verify result structure
+        try:
+            result = task_result.get(timeout=5)
+            self.assertIn('task_id', result)
+            self.assertIn('requested_duration', result)
+            self.assertIn('actual_duration', result)
+            self.assertIn('message', result)
+            self.assertEqual(result['requested_duration'], 1)
+            # Actual duration should be close to 1 second (within reasonable margin)
+            self.assertGreaterEqual(result['actual_duration'], 0.9)
+            self.assertLessEqual(result['actual_duration'], 1.5)
+        except Exception as e:
+            self.fail(f"Task execution failed or timed out: {e}")
+    
+    def test_invalid_task_name(self):
+        """Test POST with invalid task name returns error"""
+        response = self.client.post(
+            '/api/test-task/',
+            data='{"task": "nonexistent_task"}',
+            content_type='application/json'
+        )
+        self.assertEqual(response.status_code, 400)
+        
+        data = response.json()
+        self.assertIn('error', data)
+        self.assertIn('available_tasks', data)
+
+
+class AsyncTaskBehaviorTest(TestCase):
+    """Test actual async task execution behavior"""
+    
+    def test_debug_sleep_task_execution(self):
+        """Test debug_sleep task executes with correct timing"""
+        from .tasks import debug_sleep
+        import time
+        
+        # Test short duration to avoid slow tests
+        start_time = time.time()
+        result = debug_sleep(duration=1)  # Synchronous call for testing
+        end_time = time.time()
+        
+        # Should take approximately 1 second
+        actual_duration = end_time - start_time
+        self.assertGreaterEqual(actual_duration, 0.9)
+        self.assertLessEqual(actual_duration, 1.5)
+        
+        # Check result structure  
+        self.assertIn('requested_duration', result)
+        self.assertIn('actual_duration', result)
+        self.assertIn('message', result)
+        self.assertEqual(result['requested_duration'], 1)
