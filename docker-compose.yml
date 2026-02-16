@@ -51,6 +51,9 @@ services:
     container_name: ml_service
     ports:
       - "8001:8001"
+    volumes:
+      - ./ml-service:/app:cached
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
     restart: always
     
 
