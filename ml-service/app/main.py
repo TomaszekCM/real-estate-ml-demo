@@ -1,10 +1,16 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 import joblib
 import pandas as pd
 import os
 
+# TODO: Authentication will be added in a future iteration
+# Currently, all endpoints are publicly accessible without authentication
+
 app = FastAPI(
     title="Real Estate ML Service",
+    description="Machine Learning service for real estate price prediction. "
+               "⚠️ Note: Authentication not implemented yet - will be added in future versions.",
     version="1.0.0"
 )
 
@@ -21,6 +27,17 @@ try:
 except Exception as e:
     print(f"Error loading model: {e}")
 
+# Pydantic models for input validation
+class PropertyData(BaseModel):
+    city: str = Field(..., description="City name")
+    district: str = Field(..., description="District name") 
+    area_sqm: float = Field(..., gt=0, description="Area in square meters")
+    rooms: int = Field(..., gt=0, le=10, description="Number of rooms")
+
+class PredictionResponse(BaseModel):
+    predicted_price: float
+    input_data: PropertyData
+
 @app.get("/health")
 def health():
     return {
@@ -29,6 +46,45 @@ def health():
         "version": "1.0.0",
         "model_path_exists": os.path.exists(model_path)
     }
+
+@app.post("/predict", response_model=PredictionResponse)
+def predict_price(property_data: PropertyData):
+    """
+    Predict real estate price based on property characteristics.
+    
+    Note: This endpoint currently has no authentication/authorization.
+    Authentication will be implemented in a future version.
+    """
+    # Check if model is loaded
+    if model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model not available. Please check if the model file exists."
+        )
+    
+    try:
+        # Convert input to DataFrame format expected by model
+        input_df = pd.DataFrame([{
+            "city": property_data.city,
+            "district": property_data.district,
+            "area_sqm": property_data.area_sqm,
+            "rooms": property_data.rooms
+        }])
+        
+        # Make prediction
+        prediction = model.predict(input_df)
+        predicted_price = float(prediction[0])
+        
+        return PredictionResponse(
+            predicted_price=predicted_price,
+            input_data=property_data
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Prediction error: {str(e)}"
+        )
 
 
 

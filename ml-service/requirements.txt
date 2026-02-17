@@ -5,3 +5,5 @@ scikit-learn
 numpy
 joblib
 pandas
+pytest
+httpx

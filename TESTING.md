@@ -8,6 +8,7 @@ This document describes testing procedures for the Real Estate ML Demo applicati
 
 - **Unit Tests** - Django TestCase for individual components
 - **Integration Tests** - Full stack testing with PostgreSQL + Redis + Celery
+- **ML Service Tests** - FastAPI microservice testing with pytest
 - **Manual Tests** - Interactive browser/API testing scenarios
 
 ---
@@ -33,6 +34,64 @@ The automated test suite covers all critical components:
 All tests include both **unit-level** verification (imports, configurations) and **integration-level** verification (actual task execution with result validation).
 
 **Run `python manage.py test valuation --verbosity=2` to see detailed test descriptions.**
+
+---
+
+## 🤖 ML Service Tests
+
+### Running ML Service Tests
+
+The ML service has its own isolated test suite using pytest and FastAPI TestClient:
+
+```bash
+# Run tests in Docker container (recommended)
+docker exec ml_service pytest test_main.py -v
+
+# Run tests with coverage report
+docker exec ml_service pytest test_main.py --cov=app --cov-report=term-missing
+
+# Run specific test class
+docker exec ml_service pytest test_main.py::TestPredictEndpoint -v
+```
+
+### ML Test Coverage
+
+The ML service test suite covers:
+
+- **Health Endpoint Tests** - Service status, model loading verification
+- **Prediction Endpoint Tests** - Input validation, ML model predictions  
+- **Error Handling Tests** - Invalid inputs, missing model scenarios
+- **API Documentation Tests** - OpenAPI schema, authentication warnings
+
+**Key Test Categories:**
+- ✅ **Input Validation**: Negative area, zero rooms, missing fields, too many rooms
+- ✅ **Model Integration**: Real predictions with different cities/districts
+- ✅ **Error Scenarios**: Model not loaded (503), validation errors (422)
+- ✅ **API Structure**: Correct response format, required fields
+
+### ML Service Test Structure
+
+```
+ml-service/
+├── app/main.py          # FastAPI application code
+├── test_main.py         # Complete pytest test suite  
+├── pyproject.toml       # Pytest configuration (modern Python standard)
+└── requirements.txt     # Dependencies including pytest + httpx
+```
+
+**Configuration File (`pyproject.toml`):**
+- Modern Python project configuration standard (PEP 518)
+- Centralizes tool configurations (pytest, coverage, linting)
+- Replaces older `pytest.ini` and `setup.cfg` files
+- Defines test discovery patterns and execution options
+
+### Test Isolation
+
+ML Service tests are completely **isolated** from Django backend:
+- **Separate dependencies**: Own `requirements.txt` with pytest/httpx
+- **Separate execution**: `docker exec ml_service pytest` vs Django `python manage.py test`  
+- **Independent container**: Uses FastAPI TestClient, no HTTP server required
+- **Own configuration**: `pyproject.toml` for pytest settings
 
 ---
 
