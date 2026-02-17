@@ -328,3 +328,163 @@ class AsyncTaskBehaviorTest(TestCase):
         self.assertIn('actual_duration', result)
         self.assertIn('message', result)
         self.assertEqual(result['requested_duration'], 1)
+
+
+class ValuationFormViewTest(TestCase):
+    """Test property valuation form functionality"""
+
+    def test_get_form_renders_correctly(self):
+        """Test GET request returns form page"""
+        response = self.client.get('/api/valuation/')
+        
+        # Should return 200 OK
+        self.assertEqual(response.status_code, 200)
+        
+        # Should contain form elements
+        self.assertContains(response, 'id="valuation-form"')
+        self.assertContains(response, 'name="csrfmiddlewaretoken"')
+        self.assertContains(response, 'Property Valuation Request')
+        
+        # Should load our JavaScript file
+        self.assertContains(response, 'valuation-form.js')
+
+    def test_post_valid_json_creates_record(self):
+        """Test POST with valid JSON data creates ValuationRequest"""
+        valid_data = {
+            'city': 'Warsaw',
+            'district': 'Mokotow', 
+            'area_sqm': 65.5,
+            'rooms': 2
+        }
+        
+        response = self.client.post(
+            '/api/valuation/',
+            data=valid_data,
+            content_type='application/json'
+        )
+        
+        # Should return 200 with success JSON
+        self.assertEqual(response.status_code, 200)
+        
+        response_data = response.json()
+        self.assertTrue(response_data['success'])
+        self.assertEqual(response_data['message'], 'Valuation request submitted successfully')
+        self.assertIn('request_id', response_data)
+        self.assertEqual(response_data['status'], 'PENDING')
+        
+        # Should create record in database
+        self.assertEqual(ValuationRequest.objects.count(), 1)
+        
+        saved_request = ValuationRequest.objects.first()
+        self.assertEqual(saved_request.city, 'Warsaw')
+        self.assertEqual(saved_request.district, 'Mokotow')
+        self.assertEqual(float(saved_request.area_sqm), 65.5)
+        self.assertEqual(saved_request.rooms, 2)
+        self.assertEqual(saved_request.status, ValuationRequest.Status.PENDING)
+
+    def test_post_invalid_json_returns_errors(self):
+        """Test POST with invalid data returns validation errors"""
+        invalid_data = {
+            'city': '',  # Required field empty
+            'area_sqm': 15000,  # Too large (max 10000)
+            'rooms': 25  # Too many (max 20)
+        }
+        
+        response = self.client.post(
+            '/api/valuation/',
+            data=invalid_data,
+            content_type='application/json'
+        )
+        
+        # Should return 400 Bad Request
+        self.assertEqual(response.status_code, 400)
+        
+        response_data = response.json()
+        self.assertFalse(response_data['success'])
+        self.assertIn('errors', response_data)
+        
+        errors = response_data['errors']
+        self.assertIn('city', errors)  # Required field
+        self.assertIn('area_sqm', errors)  # Max value validation
+        self.assertIn('rooms', errors)  # Max value validation
+        
+        # Should NOT create record in database
+        self.assertEqual(ValuationRequest.objects.count(), 0)
+
+    def test_post_non_json_content_type_rejected(self):
+        """Test POST with non-JSON content type is rejected"""
+        form_data = {
+            'city': 'Warsaw',
+            'area_sqm': '65.5',
+            'rooms': '2'
+        }
+        
+        response = self.client.post(
+            '/api/valuation/',
+            data=form_data,  # Form-encoded, not JSON
+            content_type='application/x-www-form-urlencoded'
+        )
+        
+        # Should return 400 Bad Request
+        self.assertEqual(response.status_code, 400)
+        
+        response_data = response.json()
+        self.assertFalse(response_data['success'])
+        self.assertIn('JSON content type required', 
+                     response_data['errors']['__all__'][0])
+        
+        # Should NOT create record in database
+        self.assertEqual(ValuationRequest.objects.count(), 0)
+
+    def test_post_malformed_json_returns_error(self):
+        """Test POST with malformed JSON returns error"""
+        response = self.client.post(
+            '/api/valuation/',
+            data='{"city":"Warsaw","area_sqm":}',  # Malformed JSON
+            content_type='application/json'
+        )
+        
+        # Should return 400 Bad Request
+        self.assertEqual(response.status_code, 400)
+        
+        response_data = response.json()
+        self.assertFalse(response_data['success'])
+        self.assertIn('Invalid JSON data', 
+                     response_data['errors']['__all__'][0])
+
+    def test_boundary_values_validation(self):
+        """Test boundary values for area_sqm and rooms"""
+        # Test minimum valid values
+        min_valid_data = {
+            'city': 'TestCity',
+            'area_sqm': 10.0,  # Min allowed
+            'rooms': 1  # Min allowed
+        }
+        
+        response = self.client.post(
+            '/api/valuation/',
+            data=min_valid_data,
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+        
+        # Test maximum valid values
+        max_valid_data = {
+            'city': 'TestCity2',
+            'area_sqm': 10000.0,  # Max allowed
+            'rooms': 20  # Max allowed
+        }
+        
+        response = self.client.post(
+            '/api/valuation/',
+            data=max_valid_data,
+            content_type='application/json'
+        )
+        
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['success'])
+        
+        # Should have created 2 records
+        self.assertEqual(ValuationRequest.objects.count(), 2)

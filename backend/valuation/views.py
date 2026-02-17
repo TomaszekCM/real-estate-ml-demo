@@ -7,6 +7,8 @@ import json
 import time
 
 from .tasks import add_numbers, hello_world, debug_sleep
+from .forms import ValuationRequestForm
+from .models import ValuationRequest
 
 
 def health_check(request):
@@ -107,3 +109,57 @@ def manual_sleep_test_view(request):
         "status": "completed",
         "message": f"Manually triggered debug_sleep task with duration=10 seconds"
     })
+
+
+class ValuationFormView(View):
+    """Handle property valuation form submission"""
+    
+    def get(self, request):
+        """Render the valuation form"""
+        form = ValuationRequestForm()
+        return render(request, 'valuation/form.html', {'form': form})
+    
+    def post(self, request):
+        """Process AJAX JSON form submission"""
+        # Expect JSON content only
+        if request.content_type != 'application/json':
+            return JsonResponse({
+                'success': False,
+                'errors': {'__all__': ['JSON content type required']}
+            }, status=400)
+            
+        try:
+            data = json.loads(request.body)
+            form = ValuationRequestForm(data)
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'errors': {'__all__': ['Invalid JSON data']}
+            }, status=400)
+        
+        if form.is_valid():
+            # Save the valuation request
+            valuation_request = form.save(commit=False)
+            valuation_request.status = ValuationRequest.Status.PENDING
+            valuation_request.save()
+            
+            # TODO: In future, launch Celery task here
+            # celery_task = some_valuation_task.delay(valuation_request.id)
+            # valuation_request.celery_task_id = celery_task.id
+            # valuation_request.status = ValuationRequest.Status.PROCESSING
+            # valuation_request.save()
+            
+            return JsonResponse({
+                'success': True,
+                'message': 'Valuation request submitted successfully',
+                'request_id': valuation_request.id,
+                'status': valuation_request.status,
+                # Future: 'task_id': valuation_request.celery_task_id
+            })
+        
+        else:
+            # Form has validation errors
+            return JsonResponse({
+                'success': False,
+                'errors': form.errors
+            }, status=400)

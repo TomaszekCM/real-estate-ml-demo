@@ -1,0 +1,150 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Property Valuation Request</title>
+    <!-- Bootstrap CSS for styling -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .form-container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+        }
+        .error-message {
+            color: #dc3545;
+            font-size: 0.875em;
+            margin-top: 5px;
+        }
+        .success-message {
+            background: #d1edff;
+            border: 1px solid #0084ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            color: #0056b3;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+        }
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="form-container">
+            <h1 class="text-center mb-4">Property Valuation Request</h1>
+            <p class="text-muted text-center mb-4">
+                Enter your property details to get an estimated valuation
+            </p>
+            
+            <!-- Success message (when form submitted successfully) -->
+            {% if success_message %}
+            <div class="success-message" id="success-message">
+                <strong>Success!</strong> {{ success_message }}
+            </div>
+            {% endif %}
+            
+            <!-- Error messages container for AJAX -->
+            <div id="ajax-errors" style="display: none;"></div>
+            
+            <form id="valuation-form" method="post">
+                {% csrf_token %}
+                
+                <!-- City field -->
+                <div class="mb-3">
+                    <label for="{{ form.city.id_for_label }}" class="form-label">{{ form.city.label }}</label>
+                    {{ form.city }}
+                    {% if form.city.help_text %}
+                        <div class="form-text">{{ form.city.help_text }}</div>
+                    {% endif %}
+                    {% if form.city.errors %}
+                        <div class="error-message">
+                            {% for error in form.city.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- District field -->
+                <div class="mb-3">
+                    <label for="{{ form.district.id_for_label }}" class="form-label">{{ form.district.label }}</label>
+                    {{ form.district }}
+                    {% if form.district.help_text %}
+                        <div class="form-text">{{ form.district.help_text }}</div>
+                    {% endif %}
+                    {% if form.district.errors %}
+                        <div class="error-message">
+                            {% for error in form.district.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Area field -->
+                <div class="mb-3">
+                    <label for="{{ form.area_sqm.id_for_label }}" class="form-label">{{ form.area_sqm.label }}</label>
+                    {{ form.area_sqm }}
+                    {% if form.area_sqm.help_text %}
+                        <div class="form-text">{{ form.area_sqm.help_text }}</div>
+                    {% endif %}
+                    {% if form.area_sqm.errors %}
+                        <div class="error-message">
+                            {% for error in form.area_sqm.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Rooms field -->
+                <div class="mb-3">
+                    <label for="{{ form.rooms.id_for_label }}" class="form-label">{{ form.rooms.label }}</label>
+                    {{ form.rooms }}
+                    {% if form.rooms.help_text %}
+                        <div class="form-text">{{ form.rooms.help_text }}</div>
+                    {% endif %}
+                    {% if form.rooms.errors %}
+                        <div class="error-message">
+                            {% for error in form.rooms.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Submit button -->
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary btn-lg" id="submit-btn">
+                        Submit Valuation Request
+                    </button>
+                    <div class="loading" id="loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Processing your request...</p>
+                    </div>
+                </div>
+            </form>
+            
+            <!-- Information about next steps -->
+            <div class="mt-4 p-3 bg-light border-start border-4 border-info">
+                <h6 class="fw-bold">What happens next?</h6>
+                <ul class="mb-0 small text-muted">
+                    <li>Your request will be stored in our database</li>
+                    <li>Our ML model will process your property details</li>
+                    <li>You'll receive an estimated valuation (coming soon!)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and Custom Form Handler -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{% static 'valuation/js/valuation-form.js' %}"></script>
+</body>
+</html>
