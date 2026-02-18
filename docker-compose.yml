@@ -36,9 +36,11 @@ services:
       - redis
       - database
     environment:
+      - DJANGO_SETTINGS_MODULE=valuation_api.settings
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DATABASE_URL=postgresql://postgres:postgres123@database:5432/real_estate_db
+      - ML_SERVICE_URL=http://172.17.0.1:8001
     volumes:
       - ./backend:/app:cached
     command: watchmedo auto-restart --directory=/app --pattern='*/tasks.py;*/celery.py;*/settings.py;*/models.py' --recursive -- celery -A valuation_api worker --loglevel=info

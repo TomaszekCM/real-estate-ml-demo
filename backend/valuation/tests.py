@@ -5,6 +5,12 @@ import redis
 from django.conf import settings
 from .models import ValuationRequest, ValuationResult
 from celery.result import AsyncResult
+from unittest.mock import patch, Mock
+import requests
+from .tasks import process_valuation_request
+from django.core.exceptions import ValidationError
+from .forms import ValuationRequestForm
+from django import forms
 
 
 class RedisCacheTest(TestCase):
@@ -488,3 +494,540 @@ class ValuationFormViewTest(TestCase):
         
         # Should have created 2 records
         self.assertEqual(ValuationRequest.objects.count(), 2)
+
+
+# ==============================================================================
+# ASYNC VALUATION PROCESSING TESTS
+# ==============================================================================
+
+
+class ProcessValuationTaskTest(TestCase):
+    """Test async valuation processing Celery task"""
+
+    def setUp(self):
+        """Create test valuation request"""
+        self.test_request = ValuationRequest.objects.create(
+            city="Krakow",
+            district="Stare Miasto",
+            area_sqm=75.0,
+            rooms=3,
+            status=ValuationRequest.Status.PENDING
+        )
+
+    @patch('valuation.tasks.requests.post')
+    def test_successful_valuation_processing(self, mock_post):
+        """Test complete successful valuation workflow"""
+        # Mock ML service response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'predicted_price': 850000.0,
+            'input_data': {
+                'city': 'Krakow',
+                'district': 'Stare Miasto', 
+                'area_sqm': 75.0,
+                'rooms': 3
+            }
+        }
+        mock_post.return_value = mock_response
+
+        # Execute task synchronously for testing
+        with patch('valuation.tasks.time.sleep'):  # Skip sleep delays
+            result = process_valuation_request(self.test_request.id)
+
+        # Verify task result
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['request_id'], self.test_request.id)
+        self.assertEqual(result['estimated_price'], 850000)
+        self.assertEqual(result['price_per_sqm'], 11333)  # 850000 / 75
+
+        # Verify database updates
+        self.test_request.refresh_from_db()
+        self.assertEqual(self.test_request.status, ValuationRequest.Status.DONE)
+        
+        # Verify ValuationResult created
+        results = ValuationResult.objects.filter(request=self.test_request)
+        self.assertEqual(results.count(), 1)
+        
+        result_obj = results.first()
+        self.assertEqual(result_obj.estimated_price, 850000)
+        self.assertEqual(result_obj.price_per_sqm, 11333)
+        self.assertEqual(result_obj.model_version, 'v1.0')
+
+        # Verify ML service was called correctly
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        self.assertEqual(call_args[1]['json'], {
+            'city': 'Krakow',
+            'district': 'Stare Miasto',
+            'area_sqm': 75.0,
+            'rooms': 3
+        })
+
+    @patch('valuation.tasks.requests.post')  
+    def test_ml_service_error_handling(self, mock_post):
+        """Test handling of ML service errors"""
+        # Mock ML service error response
+        mock_response = Mock()
+        mock_response.status_code = 422
+        mock_response.text = '{"detail":"Validation error"}'
+        mock_post.return_value = mock_response
+
+        # Execute task
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(self.test_request.id)
+
+        # Verify error handling
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('ML service returned status 422', result['error'])
+
+        # Verify status updated to FAILED
+        self.test_request.refresh_from_db()
+        self.assertEqual(self.test_request.status, ValuationRequest.Status.FAILED)
+
+        # No ValuationResult should be created
+        self.assertEqual(ValuationResult.objects.filter(request=self.test_request).count(), 0)
+
+    @patch('valuation.tasks.requests.post')
+    def test_ml_service_timeout_handling(self, mock_post):
+        """Test handling of ML service timeout"""
+        # Mock timeout exception
+        mock_post.side_effect = requests.exceptions.Timeout("Request timeout")
+
+        # Execute task
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(self.test_request.id)
+
+        # Verify error handling
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('ML service communication error', result['error'])
+        self.assertIn('Request timeout', result['error'])
+
+        # Verify status updated to FAILED
+        self.test_request.refresh_from_db()
+        self.assertEqual(self.test_request.status, ValuationRequest.Status.FAILED)
+
+    @patch('valuation.tasks.requests.post')
+    def test_ml_service_connection_error_handling(self, mock_post):
+        """Test handling of ML service connection errors"""
+        # Mock connection error
+        mock_post.side_effect = requests.exceptions.ConnectionError("Connection refused")
+
+        # Execute task
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(self.test_request.id)
+
+        # Verify error handling  
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('ML service communication error', result['error'])
+        self.assertIn('Connection refused', result['error'])
+
+    def test_nonexistent_request_handling(self):
+        """Test handling of non-existent ValuationRequest"""
+        # Execute task with non-existent ID
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(99999)
+
+        # Verify error handling
+        self.assertEqual(result['status'], 'error')
+        self.assertIn('ValuationRequest 99999 not found', result['error'])
+
+    @patch('valuation.tasks.requests.post')
+    def test_nullable_district_handling(self, mock_post):
+        """Test handling of nullable district field"""
+        # Create request without district (empty string, not None)
+        no_district_request = ValuationRequest.objects.create(
+            city="Warsaw",
+            district="",  # Empty string (blank=True, but not null=True)
+            area_sqm=100.0,
+            rooms=4,
+            status=ValuationRequest.Status.PENDING
+        )
+
+        # Mock ML service response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'predicted_price': 1200000.0,
+            'input_data': {'city': 'Warsaw', 'district': 'Unknown', 'area_sqm': 100.0, 'rooms': 4}
+        }
+        mock_post.return_value = mock_response
+
+        # Execute task
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(no_district_request.id)
+
+        # Verify success
+        self.assertEqual(result['status'], 'success')
+        
+        # Verify ML service called with "Unknown" district
+        call_args = mock_post.call_args
+        self.assertEqual(call_args[1]['json']['district'], 'Unknown')
+
+    @patch('valuation.tasks.requests.post')
+    def test_status_progression(self, mock_post):
+        """Test proper status progression through workflow"""
+        # Mock ML service response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'predicted_price': 750000.0,
+            'input_data': {'city': 'Gdansk', 'area_sqm': 80.0, 'rooms': 2}
+        }
+        mock_post.return_value = mock_response
+
+        # Verify initial status
+        self.assertEqual(self.test_request.status, ValuationRequest.Status.PENDING)
+
+        # Execute task with controlled timing
+        with patch('valuation.tasks.time.sleep') as mock_sleep:
+            result = process_valuation_request(self.test_request.id)
+
+        # Verify final status
+        self.test_request.refresh_from_db()
+        self.assertEqual(self.test_request.status, ValuationRequest.Status.DONE)
+        
+        # Verify sleep was called for UX delays
+        self.assertEqual(mock_sleep.call_count, 2)  # Initial delay + processing delay
+
+
+class ValuationIntegrationTest(TestCase):
+    """Integration tests for complete valuation workflow"""
+
+    @patch('valuation.tasks.requests.post')
+    def test_end_to_end_valuation_workflow(self, mock_post):
+        """Test complete end-to-end async valuation workflow"""
+        # Mock ML service response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'predicted_price': 1500000.0,
+            'input_data': {
+                'city': 'Warsaw',
+                'district': 'Mokotow', 
+                'area_sqm': 120.0,
+                'rooms': 4
+            }
+        }
+        mock_post.return_value = mock_response
+
+        # Step 1: Submit valuation request via API
+        response = self.client.post(
+            '/api/valuation/',
+            data={
+                'city': 'Warsaw',
+                'district': 'Mokotow',
+                'area_sqm': 120.0,
+                'rooms': 4
+            },
+            content_type='application/json'
+        )
+
+        # Verify submission success
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json()
+        self.assertTrue(response_data['success'])
+        self.assertEqual(response_data['status'], 'PENDING')
+        
+        request_id = response_data['request_id']
+        task_id = response_data['task_id']
+        
+        # Verify database record created
+        valuation_request = ValuationRequest.objects.get(id=request_id)
+        self.assertEqual(valuation_request.status, ValuationRequest.Status.PENDING)
+        self.assertEqual(valuation_request.celery_task_id, task_id)
+
+        # Step 2: Process async task (simulate Celery execution)
+        with patch('valuation.tasks.time.sleep'):
+            result = process_valuation_request(request_id)
+
+        # Step 3: Verify complete success
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['estimated_price'], 1500000)
+        
+        # Verify database final state
+        valuation_request.refresh_from_db()
+        self.assertEqual(valuation_request.status, ValuationRequest.Status.DONE)
+        
+        results = ValuationResult.objects.filter(request=valuation_request)
+        self.assertEqual(results.count(), 1)
+        
+        final_result = results.first()
+        self.assertEqual(final_result.estimated_price, 1500000)
+        self.assertEqual(final_result.price_per_sqm, 12500)  # 1500000 / 120
+
+    def test_form_validation_integration(self):
+        """Test form validation with model constraints"""
+        # Test rooms validation (1-20 constraint)
+        invalid_data = {
+            'city': 'TestCity',
+            'district': 'TestDistrict', 
+            'area_sqm': 100.0,
+            'rooms': 25  # Exceeds max of 20
+        }
+
+        response = self.client.post(
+            '/api/valuation/',
+            data=invalid_data,
+            content_type='application/json'
+        )
+
+        self.assertEqual(response.status_code, 400)
+        response_data = response.json()
+        self.assertFalse(response_data['success'])
+        self.assertIn('rooms', response_data['errors'])
+
+        # No database record should be created
+        self.assertEqual(ValuationRequest.objects.count(), 0)
+
+    def test_concurrent_requests_handling(self):
+        """Test system handles multiple concurrent requests properly"""
+        # Create multiple valuation requests
+        test_data = [
+            {'city': 'Warsaw', 'district': 'Center', 'area_sqm': 50.0, 'rooms': 2},
+            {'city': 'Krakow', 'district': 'Old Town', 'area_sqm': 75.0, 'rooms': 3}, 
+            {'city': 'Gdansk', 'district': 'Main City', 'area_sqm': 100.0, 'rooms': 4}
+        ]
+
+        request_ids = []
+        task_ids = []
+
+        # Submit multiple requests
+        for data in test_data:
+            response = self.client.post(
+                '/api/valuation/',
+                data=data,
+                content_type='application/json'
+            )
+            
+            self.assertEqual(response.status_code, 200)
+            response_data = response.json()
+            request_ids.append(response_data['request_id'])
+            task_ids.append(response_data['task_id'])
+
+        # Verify all requests created with unique IDs
+        self.assertEqual(len(set(request_ids)), 3)  # All unique
+        self.assertEqual(len(set(task_ids)), 3)     # All unique
+        self.assertEqual(ValuationRequest.objects.count(), 3)
+
+        # Verify each request has proper initial state
+        for req_id in request_ids:
+            request = ValuationRequest.objects.get(id=req_id)
+            self.assertEqual(request.status, ValuationRequest.Status.PENDING)
+            self.assertIsNotNone(request.celery_task_id)
+
+
+class ValuationModelTest(TestCase):
+    """Test ValuationRequest and ValuationResult models"""
+
+    def test_valuation_request_model_creation(self):
+        """Test creating ValuationRequest with all fields"""
+        request = ValuationRequest.objects.create(
+            city="Poznan",
+            district="Centrum", 
+            area_sqm=85.5,
+            rooms=3,
+            status=ValuationRequest.Status.PENDING,
+            celery_task_id="test-task-id"
+        )
+        
+        self.assertEqual(request.city, "Poznan")
+        self.assertEqual(request.district, "Centrum")
+        self.assertEqual(request.area_sqm, 85.5)
+        self.assertEqual(request.rooms, 3)
+        self.assertEqual(request.status, ValuationRequest.Status.PENDING)
+        self.assertEqual(request.celery_task_id, "test-task-id")
+        self.assertIsNotNone(request.created_at)
+        self.assertIsNotNone(request.edited_at)
+
+    def test_valuation_request_nullable_fields(self):
+        """Test creating ValuationRequest with blank fields"""
+        request = ValuationRequest.objects.create(
+            city="TestCity",
+            district="",  # Blank string (not NULL)
+            area_sqm=100.0,
+            rooms=2,
+            celery_task_id=""  # Blank string
+        )
+        
+        self.assertEqual(request.city, "TestCity")
+        self.assertEqual(request.district, "")
+        self.assertEqual(request.celery_task_id, "")
+
+    def test_valuation_request_constraints(self):
+        """Test model field constraints"""
+        
+        # Test area_sqm minimum constraint
+        request = ValuationRequest(
+            city="Test", 
+            area_sqm=5.0,  # Below minimum of 10
+            rooms=2
+        )
+        
+        with self.assertRaises(ValidationError):
+            request.full_clean()
+
+        # Test rooms maximum constraint  
+        request = ValuationRequest(
+            city="Test",
+            area_sqm=100.0,
+            rooms=25  # Above maximum of 20
+        )
+        
+        with self.assertRaises(ValidationError):
+            request.full_clean()
+
+    def test_valuation_result_model_creation(self):
+        """Test creating ValuationResult"""
+        # First create request
+        request = ValuationRequest.objects.create(
+            city="Wroclaw",
+            area_sqm=75.0,
+            rooms=3
+        )
+        
+        # Create result
+        result = ValuationResult.objects.create(
+            request=request,
+            estimated_price=900000,
+            price_per_sqm=12000,
+            model_version="v2.0"
+        )
+        
+        self.assertEqual(result.request, request)
+        self.assertEqual(result.estimated_price, 900000)
+        self.assertEqual(result.price_per_sqm, 12000)
+        self.assertEqual(result.model_version, "v2.0")
+        self.assertIsNotNone(result.created_at)
+
+    def test_valuation_result_relationship(self):
+        """Test relationship between ValuationRequest and ValuationResult"""
+        request = ValuationRequest.objects.create(
+            city="Lublin",
+            area_sqm=60.0,
+            rooms=2
+        )
+        
+        # Create one result for the request
+        result1 = ValuationResult.objects.create(
+            request=request,
+            estimated_price=500000,
+            price_per_sqm=8333
+        )
+        
+        # Verify the relationship works
+        self.assertEqual(request.result, result1)
+        self.assertEqual(result1.request, request)
+        
+        # Try to create another result for the same request (should fail due to OneToOne)
+        with self.assertRaises(Exception):
+            ValuationResult.objects.create(
+                request=request,
+                estimated_price=520000, 
+                price_per_sqm=8666
+            )
+
+    def test_model_string_representations(self):   
+        """Test __str__ methods of models"""
+        request = ValuationRequest.objects.create(
+            city="Katowice",
+            area_sqm=90.0,
+            rooms=4
+        )
+        
+        # Test request string representation
+        expected_str = f"ValuationRequest for {request.city}, {request.district} - {request.area_sqm} sqm, {request.rooms} rooms"
+        self.assertEqual(str(request), expected_str)
+        
+        result = ValuationResult.objects.create(
+            request=request,
+            estimated_price=750000,
+            price_per_sqm=8333
+        )
+        
+        # Test result string representation  
+        expected_result_str = f"ValuationResult for property {request} - Estimated Price: 750000"
+        self.assertEqual(str(result), expected_result_str)
+
+
+class ValuationFormTest(TestCase):
+    """Test ValuationRequestForm validation and functionality"""
+
+    def test_valid_form_data(self):
+        """Test form with valid data"""
+        from .forms import ValuationRequestForm
+        
+        form_data = {
+            'city': 'Szczecin',
+            'district': 'Centrum',
+            'area_sqm': 95.5,
+            'rooms': 3
+        }
+        
+        form = ValuationRequestForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        
+        # Test saving
+        request = form.save()
+        self.assertEqual(request.city, 'Szczecin')
+        self.assertEqual(request.district, 'Centrum') 
+        self.assertEqual(request.area_sqm, 95.5)
+        self.assertEqual(request.rooms, 3)
+
+    def test_form_required_fields(self):
+        """Test form with missing required fields"""
+        from .forms import ValuationRequestForm
+        
+        form = ValuationRequestForm(data={})
+        self.assertFalse(form.is_valid())
+        
+        required_fields = ['city', 'area_sqm', 'rooms']
+        for field in required_fields:
+            self.assertIn(field, form.errors)
+
+    def test_form_optional_district(self):  
+        """Test form with optional district field"""
+        
+        form_data = {
+            'city': 'Torun',
+            # district omitted (optional)
+            'area_sqm': 70.0,
+            'rooms': 2
+        }
+        
+        form = ValuationRequestForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        
+        request = form.save()
+        self.assertEqual(request.district, '')  # Empty string, not None
+
+    def test_form_widgets_and_help_text(self):
+        """Test form widgets and help text are properly configured"""
+        
+        form = ValuationRequestForm()
+        
+        # Test widget types
+        self.assertIsInstance(form.fields['city'].widget, forms.TextInput)
+        self.assertIsInstance(form.fields['area_sqm'].widget, forms.NumberInput) 
+        self.assertIsInstance(form.fields['rooms'].widget, forms.NumberInput)
+        
+        # Test basic widget attributes
+        area_widget = form.fields['area_sqm'].widget
+        rooms_widget = form.fields['rooms'].widget
+        
+        self.assertEqual(area_widget.attrs['min'], '10')
+        self.assertEqual(area_widget.attrs['max'], '10000') 
+        self.assertEqual(rooms_widget.attrs['max'], '20')
+        
+        # Test help text is present 
+        self.assertIn('10-10,000', form.fields['area_sqm'].help_text)
+        self.assertIn('1-20', form.fields['rooms'].help_text)
+        
+        # Test form validation works correctly
+        valid_data = {
+            'city': 'Warszawa',
+            'area_sqm': 100.0,
+            'rooms': 3
+        }
+        form_with_data = ValuationRequestForm(data=valid_data)
+        self.assertTrue(form_with_data.is_valid())

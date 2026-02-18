@@ -32,7 +32,7 @@ class PropertyData(BaseModel):
     city: str = Field(..., description="City name")
     district: str = Field(..., description="District name") 
     area_sqm: float = Field(..., gt=0, description="Area in square meters")
-    rooms: int = Field(..., gt=0, le=10, description="Number of rooms")
+    rooms: int = Field(..., gt=0, le=20, description="Number of rooms (1-20)")
 
 class PredictionResponse(BaseModel):
     predicted_price: float

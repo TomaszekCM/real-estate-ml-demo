@@ -5,8 +5,11 @@ from django.utils.decorators import method_decorator
 from django.views import View
 import json
 import time
+import logging
 
-from .tasks import add_numbers, hello_world, debug_sleep
+logger = logging.getLogger(__name__)
+
+from .tasks import add_numbers, hello_world, debug_sleep, process_valuation_request
 from .forms import ValuationRequestForm
 from .models import ValuationRequest
 
@@ -143,18 +146,19 @@ class ValuationFormView(View):
             valuation_request.status = ValuationRequest.Status.PENDING
             valuation_request.save()
             
-            # TODO: In future, launch Celery task here
-            # celery_task = some_valuation_task.delay(valuation_request.id)
-            # valuation_request.celery_task_id = celery_task.id
-            # valuation_request.status = ValuationRequest.Status.PROCESSING
-            # valuation_request.save()
+            # Launch Celery task for async processing
+            celery_task = process_valuation_request.delay(valuation_request.id)
+            valuation_request.celery_task_id = celery_task.id
+            valuation_request.save()
+            
+            logger.info(f"Launched valuation task {celery_task.id} for request {valuation_request.id}")
             
             return JsonResponse({
                 'success': True,
                 'message': 'Valuation request submitted successfully',
                 'request_id': valuation_request.id,
                 'status': valuation_request.status,
-                # Future: 'task_id': valuation_request.celery_task_id
+                'task_id': valuation_request.celery_task_id
             })
         
         else:

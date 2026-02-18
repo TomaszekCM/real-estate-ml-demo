@@ -21,8 +21,8 @@ RUN apt-get update \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project  
-COPY . /app/
+# Copy backend project  
+COPY backend/ /app/
 
 # Create user to run Celery (security best practice)
 RUN groupadd -r celery && useradd -r -g celery celery

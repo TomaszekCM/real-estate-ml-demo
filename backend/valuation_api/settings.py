@@ -156,3 +156,35 @@ except ImportError:
     # No local_settings.py file found - keep defaults or raise error
     if SECRET_KEY is None:
         raise Exception("config error: SECRET_KEY must be set in local_settings.py for development")
+
+# Override database settings with environment variables if present (for Docker containers)
+import os
+if 'DATABASE_URL' in os.environ:
+    # Simple parsing of postgresql://user:pass@host:port/db
+    # DATABASE_URL = postgresql://postgres:postgres123@database:5432/real_estate_db
+    url = os.environ['DATABASE_URL']
+    if url.startswith('postgresql://'):
+        # Extract components: postgresql://user:pass@host:port/db
+        url = url.replace('postgresql://', '')
+        auth, host_db = url.split('@')
+        user, password = auth.split(':')
+        host_port, db_name = host_db.split('/')
+        host, port = host_port.split(':')
+        
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': db_name,
+                'USER': user,
+                'PASSWORD': password,
+                'HOST': host,
+                'PORT': port,
+                'OPTIONS': {
+                    'connect_timeout': 10,
+                },
+            }
+        }
+
+# Override ML service URL with environment variable if present (for Docker containers)
+if 'ML_SERVICE_URL' in os.environ:
+    ML_SERVICE_URL = os.environ['ML_SERVICE_URL']
