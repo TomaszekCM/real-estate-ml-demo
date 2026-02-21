@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 from .tasks import add_numbers, hello_world, debug_sleep, process_valuation_request
 from .forms import ValuationRequestForm
-from .models import ValuationRequest
+from .models import ValuationRequest, ValuationResult
 
 
 def health_check(request):
@@ -167,3 +167,41 @@ class ValuationFormView(View):
                 'success': False,
                 'errors': form.errors
             }, status=400)
+
+
+class ValuationStatusView(View):
+    """API endpoint for checking valuation request status"""
+    
+    def get(self, request, request_id):
+        """Get current status of a valuation request"""
+        try:
+            valuation_request = ValuationRequest.objects.get(id=request_id)
+            
+            response_data = {
+                'request_id': valuation_request.id,
+                'status': valuation_request.status,
+                'created_at': valuation_request.created_at.isoformat(),
+                'task_id': valuation_request.celery_task_id
+            }
+            
+            # If completed successfully, include the result
+            if valuation_request.status == ValuationRequest.Status.DONE:
+                try:
+                    result = valuation_request.result
+                    response_data['result'] = {
+                        'estimated_price': result.estimated_price,
+                        'price_per_sqm': result.price_per_sqm,
+                        'model_version': result.model_version,
+                        'created_at': result.created_at.isoformat()
+                    }
+                except ValuationResult.DoesNotExist:
+                    # Status is DONE but no result exists - data inconsistency
+                    response_data['status'] = ValuationRequest.Status.FAILED
+                    response_data['error'] = 'Result not found'
+            
+            return JsonResponse(response_data)
+            
+        except ValuationRequest.DoesNotExist:
+            return JsonResponse({
+                'error': 'Valuation request not found'
+            }, status=404)

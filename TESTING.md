@@ -19,17 +19,44 @@ This document describes testing procedures for the Real Estate ML Demo applicati
 
 ```bash
 cd backend
+
+# Run all tests across all modules
+python manage.py test
+
+# Run all valuation app tests
 python manage.py test valuation
+
+# Run specific test module
+python manage.py test valuation.tests.test_infrastructure
+python manage.py test valuation.tests.test_tasks
+python manage.py test valuation.tests.test_views
+python manage.py test valuation.tests.test_models
+python manage.py test valuation.tests.test_integration
+```
+
+### Test Structure
+
+Tests are organized into **5 modular files** for better maintainability:
+
+```
+backend/valuation/tests/
+├── __init__.py                 # Test package initialization
+├── test_infrastructure.py      # Redis, PostgreSQL, health checks (8 tests)
+├── test_models.py              # Model validation, forms (4 tests)  
+├── test_tasks.py               # Celery tasks, async processing (16 tests)
+├── test_views.py               # AJAX endpoints, status polling (16 tests)
+└── test_integration.py         # End-to-end workflows (11 tests)
 ```
 
 ### Test Coverage
 
 The automated test suite covers all critical components:
 
-- **Infrastructure Tests** - Redis cache operations, PostgreSQL connectivity, integrated health checks
-- **Celery Integration Tests** - Task registration, imports, and synchronous execution validation  
-- **API Endpoint Tests** - HTTP endpoints for task submission with full execution verification
-- **Async Behavior Tests** - Task timing, execution flow, and result validation
+- **Infrastructure Tests** (`test_infrastructure.py`) - Redis cache operations, PostgreSQL connectivity, integrated health checks
+- **Model Tests** (`test_models.py`) - ValuationRequest/ValuationResult models, form validation, constraints
+- **Task Tests** (`test_tasks.py`) - Celery integration, task registration, async execution, ML service integration  
+- **View Tests** (`test_views.py`) - HTTP endpoints, AJAX form submission, status polling API, JSON responses
+- **Integration Tests** (`test_integration.py`) - Complete workflows, concurrent processing, end-to-end validation
 
 All tests include both **unit-level** verification (imports, configurations) and **integration-level** verification (actual task execution with result validation).
 

@@ -58,6 +58,9 @@
             <!-- Error messages container for AJAX -->
             <div id="ajax-errors" style="display: none;"></div>
             
+            <!-- Status container for polling updates -->
+            <div id="status-container" style="display: none;"></div>
+            
             <form id="valuation-form" method="post">
                 {% csrf_token %}
                 
@@ -135,9 +138,10 @@
             <div class="mt-4 p-3 bg-light border-start border-4 border-info">
                 <h6 class="fw-bold">What happens next?</h6>
                 <ul class="mb-0 small text-muted">
-                    <li>Your request will be stored in our database</li>
-                    <li>Our ML model will process your property details</li>
-                    <li>You'll receive an estimated valuation (coming soon!)</li>
+                    <li>Your request will be processed asynchronously in the background</li>
+                    <li>You'll see real-time status updates as our ML model analyzes your property</li>
+                    <li>The estimated valuation will appear automatically when ready</li>
+                    <li>No need to refresh - everything updates in real-time!</li>
                 </ul>
             </div>
         </div>
