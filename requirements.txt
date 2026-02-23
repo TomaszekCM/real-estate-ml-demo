@@ -3,5 +3,7 @@ psycopg2-binary==2.9.9
 redis==5.0.1
 celery==5.3.4
 requests==2.31.0
+gunicorn==21.2.0
+whitenoise==6.6.0
 # watchdog is used for development to auto-reload on code changes, not needed in production
 watchdog==3.0.0

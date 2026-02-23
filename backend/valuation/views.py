@@ -16,6 +16,7 @@ from .models import ValuationRequest, ValuationResult
 
 def health_check(request):
     """Basic health check endpoint"""
+    # time.sleep(10)  # Simulate a long-running operation to test worker availability
     return JsonResponse({"status": "ok", "timestamp": time.time()})
 
 

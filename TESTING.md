@@ -254,6 +254,10 @@ docker-compose up -d celery_worker
 **Issue:** `relation "django_session" does not exist`  
 **Solution:** Run migrations: `python manage.py migrate`
 
+**Issue:** `'tests' module incorrectly imported from valuation/tests'. Expected 'valuation'`  
+**Solution:** Remove conflicting `tests.py` file: `rm backend/valuation/tests.py`  
+**Explanation:** Django test discovery conflicts when both `tests.py` file and `tests/` folder exist
+
 **Issue:** Celery tasks not found  
 **Solution:** Check worker logs: `docker-compose logs celery_worker`
 
@@ -282,7 +286,75 @@ python manage.py shell -c "from django.conf import settings; print(settings.DATA
 
 ---
 
-## 📊 Performance Expectations
+## � Docker + Gunicorn Development 
+
+### Django Web Service with Auto-reload
+
+The Django web service runs with Gunicorn and development-friendly features:
+
+```yaml
+# docker-compose.yml configuration
+web:
+  command: gunicorn --reload --workers 3 --timeout 30 --bind 0.0.0.0:8000 ...
+  volumes:
+    - ./backend:/app:cached  # Live code sync
+  user: "0:0"  # Root for volume permissions
+```
+
+### Code Change Workflow
+
+**Auto-reload (when working):**
+1. ✏️ Edit `views.py`, `models.py`, etc.
+2. 💾 Save file
+3. 🔄 Gunicorn detects change → auto-restart (~1-3s)
+4. 🎉 Changes visible immediately
+
+**Manual restart (when auto-reload fails):**
+```bash
+# Quick service restart
+docker compose restart web
+
+# Full rebuild (after Dockerfile changes)
+docker compose up --build -d web
+```
+
+### Common Gunicorn Issues
+
+**Issue:** `WORKER TIMEOUT (pid:X)` with worker restart cycles  
+**Cause:** Request taking longer than `--timeout 30` seconds  
+**Solution:** Remove blocking code (e.g., `time.sleep()`) from views or increase timeout
+
+**Issue:** `Permission denied: '/app/staticfiles'`  
+**Cause:** Volume mounting permission conflicts  
+**Solution:** Service runs as `user: "0:0"` (root) for development
+
+**Issue:** Auto-reload not detecting changes  
+**Cause:** Docker volume inotify issues or syntax errors  
+**Solution:** Manual restart with `docker compose restart web`
+
+**Issue:** `SyntaxError: invalid syntax`  
+**Cause:** Python syntax error preventing module import  
+**Solution:** Fix syntax error, then restart service manually
+
+### Performance Monitoring
+
+```bash
+# Check web service logs
+docker compose logs web --tail=20
+
+# Check Gunicorn worker status
+docker compose logs web | grep "Booting worker"
+```
+
+**Expected Response Times:**
+- Health endpoint: `< 200ms`
+- Form rendering: `< 500ms`  
+- Task submission: `< 300ms`
+- Static files (WhiteNoise): `< 100ms`
+
+---
+
+## �📊 Performance Expectations
 
 **Response Times:**
 - Health endpoint: `< 50ms`  

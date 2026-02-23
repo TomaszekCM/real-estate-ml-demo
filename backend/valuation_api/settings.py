@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -118,6 +119,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# WhiteNoise configuration for serving static files in production
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/6.0/ref/settings/#default-auto-field
@@ -153,9 +158,9 @@ try:
         CACHES = LOCAL_CACHES
         
 except ImportError:
-    # No local_settings.py file found - keep defaults or raise error
-    if SECRET_KEY is None:
-        raise Exception("config error: SECRET_KEY must be set in local_settings.py for development")
+    # No local_settings.py file found - this is normal in Docker containers
+    # Environment variables will override defaults below
+    pass
 
 # Override database settings with environment variables if present (for Docker containers)
 import os
@@ -185,6 +190,20 @@ if 'DATABASE_URL' in os.environ:
             }
         }
 
+# Override other settings with environment variables if present (for Docker containers)
+if 'SECRET_KEY' in os.environ:
+    SECRET_KEY = os.environ['SECRET_KEY']
+
+if 'DEBUG' in os.environ:
+    DEBUG = os.environ['DEBUG'].lower() in ('true', '1', 'yes', 'on')
+
+if 'ALLOWED_HOSTS' in os.environ:
+    ALLOWED_HOSTS = [host.strip() for host in os.environ['ALLOWED_HOSTS'].split(',')]
+
 # Override ML service URL with environment variable if present (for Docker containers)
 if 'ML_SERVICE_URL' in os.environ:
     ML_SERVICE_URL = os.environ['ML_SERVICE_URL']
+
+# Final validation - SECRET_KEY must be set either in local_settings.py or environment variable
+if SECRET_KEY is None:
+    raise Exception("config error: SECRET_KEY must be set either in local_settings.py or as environment variable")
